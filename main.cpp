@@ -20,7 +20,7 @@ int readData(int fd, int reg, uint8_t *buf, int len) {
     return 0;
 }
 
-// 读取温度原始数据
+// 读取温度原始数据（3字节）
 int32_t readTemperature(int fd) {
     uint8_t buf[3];
     int reg = 0xFA;  // 温度数据寄存器地址
@@ -28,11 +28,12 @@ int32_t readTemperature(int fd) {
         return -1;
     }
 
+    // 将3字节数据组合为一个20位的整数
     int32_t temp_raw = (buf[0] << 12) | (buf[1] << 4) | (buf[2] >> 4);
     return temp_raw;
 }
 
-// 读取气压原始数据
+// 读取气压原始数据（3字节）
 int32_t readPressure(int fd) {
     uint8_t buf[3];
     int reg = 0xF7;  // 气压数据寄存器地址
@@ -40,6 +41,7 @@ int32_t readPressure(int fd) {
         return -1;
     }
 
+    // 将3字节数据组合为一个20位的整数
     int32_t press_raw = (buf[0] << 12) | (buf[1] << 4) | (buf[2] >> 4);
     return press_raw;
 }
@@ -65,10 +67,9 @@ int main() {
     std::cout << "原始温度数据: " << temp_raw << std::endl;
     std::cout << "原始气压数据: " << press_raw << std::endl;
 
-    // 转换为实际温度和气压值 (需要校准参数，这里只是简单示例)
-    // 校准公式会根据 BMP280 的数据手册来应用具体公式
-    float temperature = temp_raw / 100.0f;  // 这里假设转换为摄氏度
-    float pressure = press_raw / 100.0f;    // 这里假设转换为帕斯卡 (Pa)
+    // 转换为实际温度和气压值 (这里只做了简单的比例转换，实际应使用校准参数)
+    float temperature = temp_raw / 100.0f;  // 假设转换为摄氏度
+    float pressure = press_raw / 100.0f;    // 假设转换为帕斯卡 (Pa)
 
     std::cout << "转换后的温度: " << temperature << " °C" << std::endl;
     std::cout << "转换后的气压: " << pressure << " Pa" << std::endl;
