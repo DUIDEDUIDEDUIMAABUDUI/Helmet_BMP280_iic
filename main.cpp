@@ -84,10 +84,10 @@ int32_t readPressure(int fd) {
 }
 
 float compensateTemperature(int32_t temp_raw, const CalibParams &params, int32_t &fine_t) {
-    int32_t var1 = ((((temp_raw >> 3) - ((int32_t)params.dig_T1 << 1))) * params.dig_T2;
+    int32_t var1 = (((temp_raw >> 3) - ((int32_t)params.dig_T1 << 1))) * params.dig_T2;
     var1 >>= 11;
     
-    int32_t var2 = ((((temp_raw >> 4) - params.dig_T1) * 
+    int32_t var2 = (((temp_raw >> 4) - params.dig_T1) * 
                    ((temp_raw >> 4) - params.dig_T1)) >> 12;
     var2 = (var2 * params.dig_T3) >> 14;
     
