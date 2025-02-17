@@ -1,0 +1,3 @@
+/home/echo/Desktop/Helmet_BMP280_iic/build/CMakeFiles/BPM_Project.dir
+/home/echo/Desktop/Helmet_BMP280_iic/build/CMakeFiles/edit_cache.dir
+/home/echo/Desktop/Helmet_BMP280_iic/build/CMakeFiles/rebuild_cache.dir
