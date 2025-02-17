@@ -103,7 +103,7 @@ float compensateTemperature(int32_t temp_raw, const CalibParams &params, int32_t
     int32_t var1 = ((((temp_raw >> 3) - ((int32_t)params.dig_T1 << 1))) * (int32_t)params.dig_T2) >> 11;
     int32_t var2 = (((((temp_raw >> 4) - (int32_t)params.dig_T1) * ((temp_raw >> 4) - (int32_t)params.dig_T1)) >> 12) * (int32_t)params.dig_T3) >> 14;
     fine_t = var1 + var2;
-    return (fine_t * 5 + 128) >> 8) / 100.0f;
+    return ((fine_t * 5 + 128) >> 8) / 100.0f;
 }
 
 // 计算实际气压
