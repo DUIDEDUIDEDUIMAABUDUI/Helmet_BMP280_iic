@@ -4,153 +4,149 @@
 #include <sys/ioctl.h>
 #include <linux/i2c-dev.h>
 #include <cstdint>
+#include <cmath>
 
 #define BMP280_ADDRESS 0x76
+#define BMP280_ID 0x58
 
-struct CalibParams {
+class BMP280 {
+private:
+    int fd;
+    
+    // 校准参数
     uint16_t dig_T1;
-    int16_t dig_T2;
-    int16_t dig_T3;
+    int16_t dig_T2, dig_T3;
     uint16_t dig_P1;
-    int16_t dig_P2;
-    int16_t dig_P3;
-    int16_t dig_P4;
-    int16_t dig_P5;
-    int16_t dig_P6;
-    int16_t dig_P7;
-    int16_t dig_P8;
-    int16_t dig_P9;
+    int16_t dig_P2, dig_P3, dig_P4, dig_P5;
+    int16_t dig_P6, dig_P7, dig_P8, dig_P9;
+    
+    int32_t t_fine;
+
+    // I2C读写操作
+    uint8_t readByte(uint8_t reg) {
+        uint8_t value;
+        if (write(fd, &reg, 1) != 1) throw "写寄存器失败";
+        if (read(fd, &value, 1) != 1) throw "读数据失败";
+        return value;
+    }
+
+    uint16_t readU16(uint8_t reg) {
+        uint8_t buf[2];
+        if (write(fd, &reg, 1) != 1) throw "写寄存器失败";
+        if (read(fd, buf, 2) != 2) throw "读数据失败";
+        return (buf[1] << 8) | buf[0];
+    }
+
+    int16_t readS16(uint8_t reg) {
+        uint16_t val = readU16(reg);
+        return (val > 32767) ? val - 65536 : val;
+    }
+
+    void writeByte(uint8_t reg, uint8_t value) {
+        uint8_t buf[2] = {reg, value};
+        if (write(fd, buf, 2) != 2) throw "写配置失败";
+    }
+
+    void loadCalibration() {
+        dig_T1 = readU16(0x88);
+        dig_T2 = readS16(0x8A);
+        dig_T3 = readS16(0x8C);
+        
+        dig_P1 = readU16(0x8E);
+        dig_P2 = readS16(0x90);
+        dig_P3 = readS16(0x92);
+        dig_P4 = readS16(0x94);
+        dig_P5 = readS16(0x96);
+        dig_P6 = readS16(0x98);
+        dig_P7 = readS16(0x9A);
+        dig_P8 = readS16(0x9C);
+        dig_P9 = readS16(0x9E);
+    }
+
+public:
+    BMP280(const char* device = "/dev/i2c-1") {
+        if ((fd = open(device, O_RDWR)) < 0)
+            throw "无法打开I2C设备";
+            
+        if (ioctl(fd, I2C_SLAVE, BMP280_ADDRESS) < 0)
+            throw "无法访问I2C设备";
+            
+        if (readByte(0xD0) != BMP280_ID)
+            throw "设备ID验证失败";
+            
+        loadCalibration();
+        
+        // 配置模式：温度x1，气压x1，正常模式
+        writeByte(0xF4, 0xFF);
+        // 配置滤波器：系数4，0.5ms间隔
+        writeByte(0xF5, 0x14);
+        
+        t_fine = 0;
+    }
+
+    ~BMP280() {
+        close(fd);
+    }
+
+    float compensateTemp(int32_t adc_T) {
+        double var1 = (adc_T/16384.0 - dig_T1/1024.0) * dig_T2;
+        double var2 = pow(adc_T/131072.0 - dig_T1/8192.0, 2) * dig_T3;
+        t_fine = var1 + var2;
+        return (var1 + var2) / 5120.0;
+    }
+
+    float compensatePress(int32_t adc_P) {
+        double var1 = t_fine/2.0 - 64000.0;
+        double var2 = var1 * var1 * dig_P6 / 32768.0;
+        var2 += var1 * dig_P5 * 2.0;
+        var2 = var2/4.0 + dig_P4*65536.0;
+        
+        var1 = (dig_P3 * var1 * var1/524288.0 + dig_P2 * var1) / 524288.0;
+        var1 = (1.0 + var1/32768.0) * dig_P1;
+        
+        if (var1 == 0) return 0;
+        
+        double p = 1048576.0 - adc_P;
+        p = (p - var2/4096.0) * 6250.0 / var1;
+        var1 = dig_P9 * p * p / 2147483648.0;
+        var2 = p * dig_P8 / 32768.0;
+        return p + (var1 + var2 + dig_P7)/16.0;
+    }
+
+    void getData(float &temp, float &press) {
+        // 读取温度
+        uint8_t temp_msb = readByte(0xFA);
+        uint8_t temp_lsb = readByte(0xFB);
+        uint8_t temp_xlsb = readByte(0xFC);
+        int32_t adc_T = (temp_msb << 12) | (temp_lsb << 4) | (temp_xlsb >> 4);
+        temp = compensateTemp(adc_T);
+
+        // 读取气压
+        uint8_t press_msb = readByte(0xF7);
+        uint8_t press_lsb = readByte(0xF8);
+        uint8_t press_xlsb = readByte(0xF9);
+        int32_t adc_P = (press_msb << 12) | (press_lsb << 4) | (press_xlsb >> 4);
+        press = compensatePress(adc_P);
+    }
 };
 
-int readData(int fd, uint8_t reg, uint8_t *buf, int len) {
-    if (write(fd, &reg, 1) != 1) {
-        std::cerr << "写寄存器失败" << std::endl;
-        return -1;
-    }
-    if (read(fd, buf, len) != len) {
-        std::cerr << "读数据失败" << std::endl;
-        return -1;
-    }
-    return 0;
-}
-
-bool readCalibrationData(int fd, CalibParams &params) {
-    uint8_t calib_data[24];
-    if (readData(fd, 0x88, calib_data, 24) != 0) return false;
-
-    // 正确解析有符号值（符号扩展）
-    params.dig_T1 = (calib_data[1] << 8) | calib_data[0];
-    params.dig_T2 = (int16_t)(calib_data[3] << 8) | calib_data[2];
-    params.dig_T3 = (int16_t)(calib_data[5] << 8) | calib_data[4];
-
-    params.dig_P1 = (calib_data[7] << 8) | calib_data[6];
-    params.dig_P2 = (int16_t)(calib_data[9] << 8) | calib_data[8];
-    params.dig_P3 = (int16_t)(calib_data[11] << 8) | calib_data[10];
-    params.dig_P4 = (int16_t)(calib_data[13] << 8) | calib_data[12];
-    params.dig_P5 = (int16_t)(calib_data[15] << 8) | calib_data[14];
-    params.dig_P6 = (int16_t)(calib_data[17] << 8) | calib_data[16];
-    params.dig_P7 = (int16_t)(calib_data[19] << 8) | calib_data[18];
-    params.dig_P8 = (int16_t)(calib_data[21] << 8) | calib_data[20];
-    params.dig_P9 = (int16_t)(calib_data[23] << 8) | calib_data[22];
-
-    return true;
-}
-
-bool configureSensor(int fd) {
-    uint8_t config[2] = {0xF4, 0x27}; // 控制寄存器+模式
-    if (write(fd, config, 2) != 2) return false;
-    return true;
-}
-
-int32_t readTemperature(int fd) {
-    uint8_t buf[3];
-    if (readData(fd, 0xFA, buf, 3) != 0) return 0;
-    
-    // 正确符号扩展（20位）
-    int32_t temp_raw = (buf[0] << 12) | (buf[1] << 4) | (buf[2] >> 4);
-    temp_raw = temp_raw & 0x000FFFFF; // 确保20位
-    if (temp_raw & 0x00080000) temp_raw |= 0xFFF00000;
-    return temp_raw;
-}
-
-int32_t readPressure(int fd) {
-    uint8_t buf[3];
-    if (readData(fd, 0xF7, buf, 3) != 0) return 0;
-    
-    int32_t press_raw = (buf[0] << 12) | (buf[1] << 4) | (buf[2] >> 4);
-    press_raw = press_raw & 0x000FFFFF;
-    if (press_raw & 0x00080000) press_raw |= 0xFFF00000;
-    return press_raw;
-}
-
-float compensateTemperature(int32_t temp_raw, const CalibParams &params, int32_t &fine_t) {
-    int32_t var1 = (((temp_raw >> 3) - ((int32_t)params.dig_T1 << 1))) * params.dig_T2;
-    var1 >>= 11;
-    
-    int32_t var2 = (((temp_raw >> 4) - params.dig_T1) * 
-                   ((temp_raw >> 4) - params.dig_T1)) >> 12;
-    var2 = (var2 * params.dig_T3) >> 14;
-    
-    fine_t = var1 + var2;
-    float temp = (fine_t * 5.0f + 128.0f) / 256.0f;
-    return temp / 100.0f;
-}
-
-float compensatePressure(int32_t press_raw, int32_t fine_t, const CalibParams &params) {
-    int64_t var1, var2, p;
-
-    var1 = (int64_t)fine_t - 128000LL;
-    var2 = var1 * var1 * (int64_t)params.dig_P6;
-    var2 += (var1 * (int64_t)params.dig_P5) << 17;
-    var2 += (int64_t)params.dig_P4 << 35;
-    
-    var1 = ((var1 * var1 * (int64_t)params.dig_P3) >> 8) + 
-           ((var1 * (int64_t)params.dig_P2) << 12);
-    var1 = ((1LL << 47) + var1) * params.dig_P1 >> 33;
-
-    if (var1 == 0) return 0;
-
-    p = 1048576LL - press_raw;
-    p = (((p << 31) - var2) * 3125LL) / var1;
-    var1 = ((int64_t)params.dig_P9 * (p >> 13) * (p >> 13)) >> 25;
-    var2 = ((int64_t)params.dig_P8 * p) >> 19;
-    p = ((p + var1 + var2) >> 8) + ((int64_t)params.dig_P7 << 4);
-
-    return (float)p / 25600.0f; // 转换为hPa
-}
-
 int main() {
-    int fd = open("/dev/i2c-1", O_RDWR);
-    if (fd < 0 || ioctl(fd, I2C_SLAVE, BMP280_ADDRESS) < 0) {
-        std::cerr << "I2C初始化失败" << std::endl;
-        return -1;
+    try {
+        BMP280 sensor;
+        while(true) {
+            float temp, press;
+            sensor.getData(temp, press);
+            
+            std::cout.precision(2);
+            std::cout << "\rTemperature: " << std::fixed << temp 
+                      << " °C\tPressure: " << press/1000 << " kPa"
+                      << std::flush;
+            
+            usleep(500000); // 500ms间隔
+        }
+    } catch (const char* msg) {
+        std::cerr << "错误: " << msg << std::endl;
+        return 1;
     }
-
-    CalibParams params;
-    if (!readCalibrationData(fd, params) || !configureSensor(fd)) {
-        std::cerr << "初始化失败" << std::endl;
-        close(fd);
-        return -1;
-    }
-
-    // 调试输出校准参数
-    std::cout << "T1:" << params.dig_T1 << " T2:" << params.dig_T2 
-              << " T3:" << params.dig_T3 << std::endl;
-
-    sleep(1); // 确保首次测量完成
-
-    int32_t temp_raw = readTemperature(fd);
-    int32_t press_raw = readPressure(fd);
-    std::cout << "原始温度:" << temp_raw << " 原始气压:" << press_raw << std::endl;
-
-    int32_t fine_t;
-    float temp = compensateTemperature(temp_raw, params, fine_t);
-    float press = compensatePressure(press_raw, fine_t, params);
-
-    std::cout.precision(2);
-    std::cout << "温度: " << std::fixed << temp << " °C\n"
-              << "气压: " << press << " hPa" << std::endl;
-
-    close(fd);
     return 0;
 }
