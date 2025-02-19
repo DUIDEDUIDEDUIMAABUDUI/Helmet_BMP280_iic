@@ -71,8 +71,7 @@ public:
         if (ioctl(fd, I2C_SLAVE, BMP280_ADDRESS) < 0)
             throw "无法访问I2C设备";
             
-        if (readByte(0xD0) != BMP280_ID)
-            throw "设备ID验证失败";
+        
             
         loadCalibration();
         
